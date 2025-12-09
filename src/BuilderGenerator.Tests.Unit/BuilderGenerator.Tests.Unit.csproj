@@ -13,6 +13,10 @@
     <PackageReference Include="Verify" Version="28.13.0" />
     <PackageReference Include="Verify.Xunit" Version="28.13.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <ProjectReference Include="..\BuilderGenerator.Core\BuilderGenerator.Core.csproj" />
     <ProjectReference Include="..\BuilderGenerator\BuilderGenerator.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
@@ -67,6 +71,14 @@
     <Compile Remove="Examples\ExampleBuilderWithObsoleteProperties.cs" />
 
     <EmbeddedResource Include="Examples\ExampleBuilderWithObsoleteProperties.cs" />
+
+    <Compile Remove="Examples\ExampleWithConstructor.cs" />
+
+    <EmbeddedResource Include="Examples\ExampleWithConstructor.cs" />
+
+    <Compile Remove="Examples\PersonWithConstructorBuilder.cs" />
+
+    <EmbeddedResource Include="Examples\PersonWithConstructorBuilder.cs" />
   </ItemGroup>
 
   <ItemGroup>
