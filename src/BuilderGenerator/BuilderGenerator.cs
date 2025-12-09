@@ -219,17 +219,42 @@ internal class BuilderGenerator : IIncrementalGenerator
     {
         var constructorParameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Get all constructors (excluding static constructors)
+        // Get all instance constructors (excluding static constructors)
         var constructors = namedTypeSymbol.InstanceConstructors;
 
-        foreach (var constructor in constructors)
+        // If there are no constructors, return empty set
+        if (!constructors.Any())
+        {
+            return constructorParameterNames;
+        }
+
+        // Cache property symbols to avoid repeated enumeration (performance optimization)
+        var propertySymbols = namedTypeSymbol.GetMembers()
+            .OfType<IPropertySymbol>()
+            .ToList();
+
+        // Find the constructor with the most parameters (typically the "primary" constructor)
+        // This handles cases where multiple constructors exist
+        var primaryConstructor = constructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public)
+            .OrderByDescending(c => c.Parameters.Length)
+            .FirstOrDefault();
+
+        // If no public constructor found, fall back to any constructor
+        if (primaryConstructor == null)
+        {
+            primaryConstructor = constructors
+                .OrderByDescending(c => c.Parameters.Length)
+                .FirstOrDefault();
+        }
+
+        if (primaryConstructor != null)
         {
             // For each constructor parameter, try to match it to a property
-            foreach (var parameter in constructor.Parameters)
+            foreach (var parameter in primaryConstructor.Parameters)
             {
                 // Find matching property (case-insensitive match, as C# allows constructor parameters to match properties with different casing)
-                var matchingProperty = namedTypeSymbol.GetMembers()
-                    .OfType<IPropertySymbol>()
+                var matchingProperty = propertySymbols
                     .FirstOrDefault(p => string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
 
                 if (matchingProperty != null)
