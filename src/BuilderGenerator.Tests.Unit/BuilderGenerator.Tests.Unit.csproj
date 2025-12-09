@@ -79,6 +79,14 @@
     <Compile Remove="Examples\PersonWithConstructorBuilder.cs" />
 
     <EmbeddedResource Include="Examples\PersonWithConstructorBuilder.cs" />
+
+    <Compile Remove="Examples\ExampleWithReadOnlyConstructor.cs" />
+
+    <EmbeddedResource Include="Examples\ExampleWithReadOnlyConstructor.cs" />
+
+    <Compile Remove="Examples\PersonWithReadOnlyConstructorBuilder.cs" />
+
+    <EmbeddedResource Include="Examples\PersonWithReadOnlyConstructorBuilder.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -267,21 +267,27 @@ internal class BuilderGenerator : IIncrementalGenerator
         return constructorParameterNames;
     }
 
-    private static IEnumerable<IPropertySymbol> GetPropertySymbols(INamedTypeSymbol namedTypeSymbol, bool includeInternals, bool includeObsolete)
+    private static IEnumerable<IPropertySymbol> GetPropertySymbols(INamedTypeSymbol namedTypeSymbol, bool includeInternals, bool includeObsolete, HashSet<string>? constructorParameterPropertyNames = null)
     {
         var baseTypeSymbol = namedTypeSymbol.BaseType;
 
         var symbols = namedTypeSymbol.GetMembers()
             .OfType<IPropertySymbol>()
             .Where(
-                x => x.SetMethod is not null
-                    && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))
-                    && (x.SetMethod.DeclaredAccessibility == Accessibility.Public || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal)))
+                x => 
+                    // Include properties with public/internal setters
+                    (x.SetMethod is not null
+                        && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))
+                        && (x.SetMethod.DeclaredAccessibility == Accessibility.Public || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal)))
+                    // OR include properties that are constructor parameters (even if they have no setter or private setter)
+                    || (constructorParameterPropertyNames != null 
+                        && constructorParameterPropertyNames.Contains(x.Name)
+                        && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))))
             .ToList();
 
         while (baseTypeSymbol != null)
         {
-            var baseTypeProperties = GetPropertySymbols(baseTypeSymbol, includeInternals, includeObsolete)
+            var baseTypeProperties = GetPropertySymbols(baseTypeSymbol, includeInternals, includeObsolete, constructorParameterPropertyNames)
                 .Where(s => symbols.All(s2 => s2.Name != s.Name));
 
             symbols.AddRange(baseTypeProperties);
@@ -344,7 +350,7 @@ internal class BuilderGenerator : IIncrementalGenerator
         var targetClassSymbol = (INamedTypeSymbol)targetClassType.Value!;
         var constructorParameterPropertyNames = GetConstructorParameterPropertyNames(targetClassSymbol);
 
-        var targetClassProperties = GetPropertySymbols(targetClassSymbol, includeInternals, includeObsolete)
+        var targetClassProperties = GetPropertySymbols(targetClassSymbol, includeInternals, includeObsolete, constructorParameterPropertyNames)
             .Select<IPropertySymbol, (string Name, string TypeName, Accessibility Accessibility, string? Comment)>(x => new ValueTuple<string, string, Accessibility, string?>(x.Name, x.Type.ToString(), x.DeclaredAccessibility, x.GetDocumentationCommentXml()))
             .Distinct()
             .OrderBy(x => x.Name)
