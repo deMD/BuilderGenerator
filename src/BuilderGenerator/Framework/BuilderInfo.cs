@@ -68,6 +68,10 @@ internal record struct BuilderInfo
         /// <value>The XML comments for the target class property.</value>
         public string? Comment { get; set; }
 
+        /// <summary>Gets or sets whether this property is set via constructor parameter.</summary>
+        /// <value>True if the property is set via constructor parameter; otherwise, false.</value>
+        public bool IsConstructorParameter { get; set; }
+
         /// <summary>Gets or sets the name of the target class property.</summary>
         /// <value>The name of the target class property.</value>
         public string Name { get; set; }

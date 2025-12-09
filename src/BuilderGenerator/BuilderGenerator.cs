@@ -107,9 +107,19 @@ internal class BuilderGenerator : IIncrementalGenerator
 
     private static string GenerateBuildMethod(TemplateParser templateParser, IEnumerable<BuilderInfo.PropertyInfo> properties)
     {
+        var propertiesList = properties.ToList();
+        var constructorParameters = propertiesList.Where(p => p.IsConstructorParameter).ToList();
+        var initializerProperties = propertiesList.Where(p => !p.IsConstructorParameter).ToList();
+
+        // Generate constructor parameters - only include parentheses if there are parameters
+        var constructorParamsString = constructorParameters.Any()
+            ? $"({string.Join(", ", constructorParameters.Select(p => $"{p.Name}.Value"))})"
+            : "";
+
+        // Generate object initializer setters
         var setters = string.Join(
             NewLine,
-            properties.Select(
+            initializerProperties.Select(
                 p =>
                 {
                     // Extract XML documentation comment for the property
@@ -123,7 +133,16 @@ internal class BuilderGenerator : IIncrementalGenerator
                     return templateParser.ParseString(BuildMethodSetter);
                 }));
 
-        templateParser.SetTag("Setters", setters);
+        // Generate object initializer block
+        var objectInitializer = initializerProperties.Any()
+            ? $@"
+                    {{
+{setters}
+                    }}"
+            : "";
+
+        templateParser.SetTag("ConstructorParameters", constructorParamsString);
+        templateParser.SetTag("ObjectInitializer", objectInitializer);
         var result = templateParser.ParseString(BuildMethod);
 
         return result;
@@ -196,21 +215,94 @@ internal class BuilderGenerator : IIncrementalGenerator
         return result;
     }
 
-    private static IEnumerable<IPropertySymbol> GetPropertySymbols(INamedTypeSymbol namedTypeSymbol, bool includeInternals, bool includeObsolete)
+    private static HashSet<string> GetConstructorParameterPropertyNames(INamedTypeSymbol namedTypeSymbol)
+    {
+        var constructorParameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Get all instance constructors (excluding static constructors)
+        var constructors = namedTypeSymbol.InstanceConstructors;
+
+        // If there are no constructors, return empty set
+        if (!constructors.Any())
+        {
+            return constructorParameterNames;
+        }
+
+        // Cache property symbols to avoid repeated enumeration (performance optimization)
+        var propertySymbols = namedTypeSymbol.GetMembers()
+            .OfType<IPropertySymbol>()
+            .ToList();
+
+        // Find the constructor with the most parameters (typically the "primary" constructor)
+        // This handles cases where multiple constructors exist
+        var primaryConstructor = constructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public)
+            .OrderByDescending(c => c.Parameters.Length)
+            .FirstOrDefault();
+
+        // If no public constructor found, fall back to any constructor
+        if (primaryConstructor == null)
+        {
+            primaryConstructor = constructors
+                .OrderByDescending(c => c.Parameters.Length)
+                .FirstOrDefault();
+        }
+
+        if (primaryConstructor != null)
+        {
+            // For each constructor parameter, try to match it to a property
+            foreach (var parameter in primaryConstructor.Parameters)
+            {
+                // Find matching property (case-insensitive match, as C# allows constructor parameters to match properties with different casing)
+                var matchingProperty = propertySymbols
+                    .FirstOrDefault(p => string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingProperty != null)
+                {
+                    constructorParameterNames.Add(matchingProperty.Name);
+                }
+            }
+        }
+
+        return constructorParameterNames;
+    }
+
+    private static bool IsObsolete(IPropertySymbol property)
+    {
+        return property.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute");
+    }
+
+    private static IEnumerable<IPropertySymbol> GetPropertySymbols(INamedTypeSymbol namedTypeSymbol, bool includeInternals, bool includeObsolete, HashSet<string>? constructorParameterPropertyNames = null)
     {
         var baseTypeSymbol = namedTypeSymbol.BaseType;
 
         var symbols = namedTypeSymbol.GetMembers()
             .OfType<IPropertySymbol>()
             .Where(
-                x => x.SetMethod is not null
-                    && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))
-                    && (x.SetMethod.DeclaredAccessibility == Accessibility.Public || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal)))
+                x => 
+                {
+                    // Skip obsolete properties unless explicitly included
+                    if (!includeObsolete && IsObsolete(x))
+                    {
+                        return false;
+                    }
+
+                    // Include properties with public/internal setters
+                    var hasAccessibleSetter = x.SetMethod is not null
+                        && (x.SetMethod.DeclaredAccessibility == Accessibility.Public 
+                            || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal));
+
+                    // OR include properties that are constructor parameters (even if they have no setter or private setter)
+                    var isConstructorParameter = constructorParameterPropertyNames != null 
+                        && constructorParameterPropertyNames.Contains(x.Name);
+
+                    return hasAccessibleSetter || isConstructorParameter;
+                })
             .ToList();
 
         while (baseTypeSymbol != null)
         {
-            var baseTypeProperties = GetPropertySymbols(baseTypeSymbol, includeInternals, includeObsolete)
+            var baseTypeProperties = GetPropertySymbols(baseTypeSymbol, includeInternals, includeObsolete, constructorParameterPropertyNames)
                 .Where(s => symbols.All(s2 => s2.Name != s.Name));
 
             symbols.AddRange(baseTypeProperties);
@@ -270,7 +362,10 @@ internal class BuilderGenerator : IIncrementalGenerator
         var includeInternals = arguments.Length > 1 && (bool)arguments[1].Value!;
         var includeObsolete = arguments.Length > 2 && (bool)arguments[2].Value!;
 
-        var targetClassProperties = GetPropertySymbols((INamedTypeSymbol)targetClassType.Value!, includeInternals, includeObsolete)
+        var targetClassSymbol = (INamedTypeSymbol)targetClassType.Value!;
+        var constructorParameterPropertyNames = GetConstructorParameterPropertyNames(targetClassSymbol);
+
+        var targetClassProperties = GetPropertySymbols(targetClassSymbol, includeInternals, includeObsolete, constructorParameterPropertyNames)
             .Select<IPropertySymbol, (string Name, string TypeName, Accessibility Accessibility, string? Comment)>(x => new ValueTuple<string, string, Accessibility, string?>(x.Name, x.Type.ToString(), x.DeclaredAccessibility, x.GetDocumentationCommentXml()))
             .Distinct()
             .OrderBy(x => x.Name)
@@ -289,6 +384,7 @@ internal class BuilderGenerator : IIncrementalGenerator
                 {
                     Accessibility = x.Accessibility,
                     Comment = x.Comment,
+                    IsConstructorParameter = constructorParameterPropertyNames.Contains(x.Name),
                     Name = x.Name,
                     Type = x.TypeName,
                 }).ToList(),
