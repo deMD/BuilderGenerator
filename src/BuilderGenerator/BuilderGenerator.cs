@@ -267,6 +267,11 @@ internal class BuilderGenerator : IIncrementalGenerator
         return constructorParameterNames;
     }
 
+    private static bool IsObsolete(IPropertySymbol property)
+    {
+        return property.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute");
+    }
+
     private static IEnumerable<IPropertySymbol> GetPropertySymbols(INamedTypeSymbol namedTypeSymbol, bool includeInternals, bool includeObsolete, HashSet<string>? constructorParameterPropertyNames = null)
     {
         var baseTypeSymbol = namedTypeSymbol.BaseType;
@@ -275,14 +280,24 @@ internal class BuilderGenerator : IIncrementalGenerator
             .OfType<IPropertySymbol>()
             .Where(
                 x => 
+                {
+                    // Skip obsolete properties unless explicitly included
+                    if (!includeObsolete && IsObsolete(x))
+                    {
+                        return false;
+                    }
+
                     // Include properties with public/internal setters
-                    (x.SetMethod is not null
-                        && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))
-                        && (x.SetMethod.DeclaredAccessibility == Accessibility.Public || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal)))
+                    var hasAccessibleSetter = x.SetMethod is not null
+                        && (x.SetMethod.DeclaredAccessibility == Accessibility.Public 
+                            || (includeInternals && x.SetMethod.DeclaredAccessibility == Accessibility.Internal));
+
                     // OR include properties that are constructor parameters (even if they have no setter or private setter)
-                    || (constructorParameterPropertyNames != null 
-                        && constructorParameterPropertyNames.Contains(x.Name)
-                        && (includeObsolete || !x.GetAttributes().Any(a => a.AttributeClass?.Name is "Obsolete" or "ObsoleteAttribute"))))
+                    var isConstructorParameter = constructorParameterPropertyNames != null 
+                        && constructorParameterPropertyNames.Contains(x.Name);
+
+                    return hasAccessibleSetter || isConstructorParameter;
+                })
             .ToList();
 
         while (baseTypeSymbol != null)
